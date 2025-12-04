@@ -36,7 +36,7 @@ def clean_and_prepare(uploaded_file, id_col, asset_col):
         if i < 9:
             columns_combined.append(header_1[i])
         else:
-            beschreibung = re.sub(r'\s+', ' ', str(header_1[i]).strip())
+            beschreibung = re.sub(r"\s+", " ", str(header_1[i]).strip())
             konto_nr = str(header_2[i]).strip()
             soll_haben = str(header_3[i]).strip()
             name = f"{beschreibung} - {konto_nr}_IFRS16 - {soll_haben}"
@@ -67,9 +67,41 @@ def prepare_contract_list(
     df.columns = (
         df.columns.astype(str)
         .str.strip()                              # führende / trailing spaces & Tabs
-        .str.replace('"', '', regex=False)        # doppelte Anführungszeichen
+        .str.replace('"', "", regex=False)        # doppelte Anführungszeichen
         .str.replace("'", "", regex=False)        # einfache Anführungszeichen
     )
+
+    # ---- Safety: prüfen, ob die erwarteten Spalten existieren ----
+    required_cols = [system_id_col, asset_col]
+    optional_cols = []
+    if payment_id_col is not None:
+        optional_cols.append(payment_id_col)
+    if option_id_col is not None:
+        optional_cols.append(option_id_col)
+
+    missing_required = [c for c in required_cols if c not in df.columns]
+    missing_optional = [c for c in optional_cols if c not in df.columns]
+
+    if missing_required:
+        st.error(
+            f"❌ Erwartete Spalten nicht gefunden: {missing_required}\n\n"
+            f"Vorhandene Spalten nach Bereinigung:\n{list(df.columns)}"
+        )
+        # Leeres DF mit Key-Index zurückgeben, damit Rest der App nicht crasht
+        empty = pd.DataFrame(columns=["Key"])
+        empty.set_index("Key", inplace=True)
+        return empty
+
+    if missing_optional:
+        st.warning(
+            "⚠️ Optionale Spalten nicht gefunden (werden beim Matching ignoriert): "
+            + ", ".join(missing_optional)
+        )
+        # wir setzen sie einfach auf None, damit unten nicht benutzt werden
+        if payment_id_col in missing_optional:
+            payment_id_col = None
+        if option_id_col in missing_optional:
+            option_id_col = None
 
     # Kerntypen als String
     df[system_id_col] = df[system_id_col].astype(str)
@@ -168,8 +200,12 @@ with tab_de:
     if mode.startswith("1️⃣"):
         # ====== SECTION 1: Closings vergleichen (DE) ======
         st.subheader("📂 Dateien für Closings hochladen")
-        file_test = st.file_uploader("Test-Datei (Closings) hochladen", type=["xlsx"], key="test_de_closings")
-        file_prod = st.file_uploader("Prod-Datei (Closings) hochladen", type=["xlsx"], key="prod_de_closings")
+        file_test = st.file_uploader(
+            "Test-Datei (Closings) hochladen", type=["xlsx"], key="test_de_closings"
+        )
+        file_prod = st.file_uploader(
+            "Prod-Datei (Closings) hochladen", type=["xlsx"], key="prod_de_closings"
+        )
 
         id_col = "Vertrags-ID"
         asset_col = "Asset-ID"
@@ -197,32 +233,46 @@ with tab_de:
             with col1:
                 out_test = io.BytesIO()
                 with pd.ExcelWriter(out_test, engine="xlsxwriter") as writer:
-                    df_test.reset_index().to_excel(writer, index=False, sheet_name="Bereinigt_Test")
+                    df_test.reset_index().to_excel(
+                        writer, index=False, sheet_name="Bereinigt_Test"
+                    )
                 st.download_button(
                     "⬇️ Bereinigte Test-Datei",
                     data=out_test.getvalue(),
                     file_name="bereinigt_test.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument."
+                        "spreadsheetml.sheet"
+                    ),
                 )
             with col2:
                 out_prod = io.BytesIO()
                 with pd.ExcelWriter(out_prod, engine="xlsxwriter") as writer:
-                    df_prod.reset_index().to_excel(writer, index=False, sheet_name="Bereinigt_Prod")
+                    df_prod.reset_index().to_excel(
+                        writer, index=False, sheet_name="Bereinigt_Prod"
+                    )
                 st.download_button(
                     "⬇️ Bereinigte Prod-Datei",
                     data=out_prod.getvalue(),
                     file_name="bereinigt_prod.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument."
+                        "spreadsheetml.sheet"
+                    ),
                 )
 
             all_keys = sorted(set(df_test.index).union(set(df_prod.index)))
-            common_cols = df_test.columns.intersection(df_prod.columns).difference([id_col, asset_col])
+            common_cols = df_test.columns.intersection(df_prod.columns).difference(
+                [id_col, asset_col]
+            )
 
             results = []
             for key in all_keys:
                 row = {
                     id_col: df_test[id_col].get(key, df_prod[id_col].get(key, "")),
-                    asset_col: df_test[asset_col].get(key, df_prod[asset_col].get(key, "")),
+                    asset_col: df_test[asset_col].get(
+                        key, df_prod[asset_col].get(key, "")
+                    ),
                 }
 
                 if key not in df_test.index:
@@ -245,7 +295,9 @@ with tab_de:
                             continue
 
                         if pd.isna(val_test) or pd.isna(val_prod) or val_test != val_prod:
-                            diffs.append(f"{col}: Test={val_test} / Prod={val_prod}")
+                            diffs.append(
+                                f"{col}: Test={val_test} / Prod={val_prod}"
+                            )
                     row["Unterschiede"] = "; ".join(diffs) if diffs else "Keine"
                 results.append(row)
 
@@ -262,14 +314,21 @@ with tab_de:
                 "📥 Vergleichsergebnis herunterladen",
                 data=out_result.getvalue(),
                 file_name="vergleichsergebnis.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
             )
 
     else:
         # ====== SECTION 2: Vertragsliste vergleichen (DE) ======
         st.subheader("📂 Vertragslisten hochladen")
-        file_test = st.file_uploader("Test-Vertragsliste hochladen", type=["xlsx"], key="test_de_contracts")
-        file_prod = st.file_uploader("Prod-Vertragsliste hochladen", type=["xlsx"], key="prod_de_contracts")
+        file_test = st.file_uploader(
+            "Test-Vertragsliste hochladen", type=["xlsx"], key="test_de_contracts"
+        )
+        file_prod = st.file_uploader(
+            "Prod-Vertragsliste hochladen", type=["xlsx"], key="prod_de_contracts"
+        )
 
         system_id_col = "System-ID"
         asset_col = "Asset System-ID"
@@ -292,8 +351,23 @@ with tab_de:
                 option_id_col=option_id_col,
             )
 
-            columns_test = set(df_test.columns) - {system_id_col, asset_col, "Key", "LineIndex"}
-            columns_prod = set(df_prod.columns) - {system_id_col, asset_col, "Key", "LineIndex"}
+            # Falls wir wegen fehlender Pflichtspalten leere DFs zurückbekommen,
+            # bricht der Rest hier einfach ab.
+            if df_test.empty and df_prod.empty:
+                st.stop()
+
+            columns_test = set(df_test.columns) - {
+                system_id_col,
+                asset_col,
+                "Key",
+                "LineIndex",
+            }
+            columns_prod = set(df_prod.columns) - {
+                system_id_col,
+                asset_col,
+                "Key",
+                "LineIndex",
+            }
 
             only_in_test = sorted(columns_test - columns_prod)
             only_in_prod = sorted(columns_prod - columns_test)
@@ -311,22 +385,32 @@ with tab_de:
             with col1:
                 out_test = io.BytesIO()
                 with pd.ExcelWriter(out_test, engine="xlsxwriter") as writer:
-                    df_test.reset_index().to_excel(writer, index=False, sheet_name="Vertragsliste_Test")
+                    df_test.reset_index().to_excel(
+                        writer, index=False, sheet_name="Vertragsliste_Test"
+                    )
                 st.download_button(
                     "⬇️ Bereinigte Test-Vertragsliste",
                     data=out_test.getvalue(),
                     file_name="vertragsliste_test.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument."
+                        "spreadsheetml.sheet"
+                    ),
                 )
             with col2:
                 out_prod = io.BytesIO()
                 with pd.ExcelWriter(out_prod, engine="xlsxwriter") as writer:
-                    df_prod.reset_index().to_excel(writer, index=False, sheet_name="Vertragsliste_Prod")
+                    df_prod.reset_index().to_excel(
+                        writer, index=False, sheet_name="Vertragsliste_Prod"
+                    )
                 st.download_button(
                     "⬇️ Bereinigte Prod-Vertragsliste",
                     data=out_prod.getvalue(),
                     file_name="vertragsliste_prod.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument."
+                        "spreadsheetml.sheet"
+                    ),
                 )
 
             all_keys = sorted(set(df_test.index).union(set(df_prod.index)))
@@ -370,7 +454,9 @@ with tab_de:
                             continue
 
                         if pd.isna(val_test) or pd.isna(val_prod) or val_test != val_prod:
-                            diffs.append(f"{col}: Test={val_test} / Prod={val_prod}")
+                            diffs.append(
+                                f"{col}: Test={val_test} / Prod={val_prod}"
+                            )
                     row["Unterschiede"] = "; ".join(diffs) if diffs else "Keine"
                 results.append(row)
 
@@ -382,12 +468,17 @@ with tab_de:
 
             out_result = io.BytesIO()
             with pd.ExcelWriter(out_result, engine="xlsxwriter") as writer:
-                df_diff.to_excel(writer, index=False, sheet_name="Vertragslisten-Vergleich")
+                df_diff.to_excel(
+                    writer, index=False, sheet_name="Vertragslisten-Vergleich"
+                )
             st.download_button(
                 "📥 Vergleichsergebnis herunterladen",
                 data=out_result.getvalue(),
                 file_name="vertragslisten_vergleich.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
             )
 
 # 🇬🇧 English
@@ -395,8 +486,12 @@ with tab_en:
     if mode.startswith("1️⃣"):
         # ====== SECTION 1: Compare closings (EN) ======
         st.subheader("📂 Upload files for closings")
-        file_test = st.file_uploader("Upload Test closing file", type=["xlsx"], key="test_en_closings")
-        file_prod = st.file_uploader("Upload Prod closing file", type=["xlsx"], key="prod_en_closings")
+        file_test = st.file_uploader(
+            "Upload Test closing file", type=["xlsx"], key="test_en_closings"
+        )
+        file_prod = st.file_uploader(
+            "Upload Prod closing file", type=["xlsx"], key="prod_en_closings"
+        )
 
         id_col = "Contract ID"
         asset_col = "Asset ID"
@@ -424,32 +519,46 @@ with tab_en:
             with col1:
                 out_test = io.BytesIO()
                 with pd.ExcelWriter(out_test, engine="xlsxwriter") as writer:
-                    df_test.reset_index().to_excel(writer, index=False, sheet_name="Cleaned_Test")
+                    df_test.reset_index().to_excel(
+                        writer, index=False, sheet_name="Cleaned_Test"
+                    )
                 st.download_button(
                     "⬇️ Download cleaned Test file",
                     data=out_test.getvalue(),
                     file_name="cleaned_test.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument."
+                        "spreadsheetml.sheet"
+                    ),
                 )
             with col2:
                 out_prod = io.BytesIO()
                 with pd.ExcelWriter(out_prod, engine="xlsxwriter") as writer:
-                    df_prod.reset_index().to_excel(writer, index=False, sheet_name="Cleaned_Prod")
+                    df_prod.reset_index().to_excel(
+                        writer, index=False, sheet_name="Cleaned_Prod"
+                    )
                 st.download_button(
                     "⬇️ Download cleaned Prod file",
                     data=out_prod.getvalue(),
                     file_name="cleaned_prod.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument."
+                        "spreadsheetml.sheet"
+                    ),
                 )
 
             all_keys = sorted(set(df_test.index).union(set(df_prod.index)))
-            common_cols = df_test.columns.intersection(df_prod.columns).difference([id_col, asset_col])
+            common_cols = df_test.columns.intersection(df_prod.columns).difference(
+                [id_col, asset_col]
+            )
 
             results = []
             for key in all_keys:
                 row = {
                     id_col: df_test[id_col].get(key, df_prod[id_col].get(key, "")),
-                    asset_col: df_test[asset_col].get(key, df_prod[asset_col].get(key, "")),
+                    asset_col: df_test[asset_col].get(
+                        key, df_prod[asset_col].get(key, "")
+                    ),
                 }
 
                 if key not in df_test.index:
@@ -472,7 +581,9 @@ with tab_en:
                             continue
 
                         if pd.isna(val_test) or pd.isna(val_prod) or val_test != val_prod:
-                            diffs.append(f"{col}: Test={val_test} / Prod={val_prod}")
+                            diffs.append(
+                                f"{col}: Test={val_test} / Prod={val_prod}"
+                            )
                     row["Differences"] = "; ".join(diffs) if diffs else "None"
                 results.append(row)
 
@@ -488,14 +599,21 @@ with tab_en:
                 "📥 Download comparison result",
                 data=out_result.getvalue(),
                 file_name="comparison_result.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
             )
 
     else:
         # ====== SECTION 2: Compare contract list (EN) ======
         st.subheader("📂 Upload contract lists")
-        file_test = st.file_uploader("Upload Test contract list", type=["xlsx"], key="test_en_contracts")
-        file_prod = st.file_uploader("Upload Prod contract list", type=["xlsx"], key="prod_en_contracts")
+        file_test = st.file_uploader(
+            "Upload Test contract list", type=["xlsx"], key="test_en_contracts"
+        )
+        file_prod = st.file_uploader(
+            "Upload Prod contract list", type=["xlsx"], key="prod_en_contracts"
+        )
 
         system_id_col = "System ID"
         asset_col = "Asset [System ID]"
@@ -518,8 +636,21 @@ with tab_en:
                 option_id_col=option_id_col,
             )
 
-            columns_test = set(df_test.columns) - {system_id_col, asset_col, "Key", "LineIndex"}
-            columns_prod = set(df_prod.columns) - {system_id_col, asset_col, "Key", "LineIndex"}
+            if df_test.empty and df_prod.empty:
+                st.stop()
+
+            columns_test = set(df_test.columns) - {
+                system_id_col,
+                asset_col,
+                "Key",
+                "LineIndex",
+            }
+            columns_prod = set(df_prod.columns) - {
+                system_id_col,
+                asset_col,
+                "Key",
+                "LineIndex",
+            }
 
             only_in_test = sorted(columns_test - columns_prod)
             only_in_prod = sorted(columns_prod - columns_test)
@@ -537,22 +668,32 @@ with tab_en:
             with col1:
                 out_test = io.BytesIO()
                 with pd.ExcelWriter(out_test, engine="xlsxwriter") as writer:
-                    df_test.reset_index().to_excel(writer, index=False, sheet_name="ContractList_Test")
+                    df_test.reset_index().to_excel(
+                        writer, index=False, sheet_name="ContractList_Test"
+                    )
                 st.download_button(
                     "⬇️ Download cleaned Test contract list",
                     data=out_test.getvalue(),
                     file_name="contract_list_test.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument."
+                        "spreadsheetml.sheet"
+                    ),
                 )
             with col2:
                 out_prod = io.BytesIO()
                 with pd.ExcelWriter(out_prod, engine="xlsxwriter") as writer:
-                    df_prod.reset_index().to_excel(writer, index=False, sheet_name="ContractList_Prod")
+                    df_prod.reset_index().to_excel(
+                        writer, index=False, sheet_name="ContractList_Prod"
+                    )
                 st.download_button(
                     "⬇️ Download cleaned Prod contract list",
                     data=out_prod.getvalue(),
                     file_name="contract_list_prod.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument."
+                        "spreadsheetml.sheet"
+                    ),
                 )
 
             all_keys = sorted(set(df_test.index).union(set(df_prod.index)))
@@ -595,7 +736,9 @@ with tab_en:
                             continue
 
                         if pd.isna(val_test) or pd.isna(val_prod) or val_test != val_prod:
-                            diffs.append(f"{col}: Test={val_test} / Prod={val_prod}")
+                            diffs.append(
+                                f"{col}: Test={val_test} / Prod={val_prod}"
+                            )
                     row["Differences"] = "; ".join(diffs) if diffs else "None"
                 results.append(row)
 
@@ -606,10 +749,15 @@ with tab_en:
 
             out_result = io.BytesIO()
             with pd.ExcelWriter(out_result, engine="xlsxwriter") as writer:
-                df_diff.to_excel(writer, index=False, sheet_name="ContractList_Comparison")
+                df_diff.to_excel(
+                    writer, index=False, sheet_name="ContractList_Comparison"
+                )
             st.download_button(
                 "📥 Download contract list comparison result",
                 data=out_result.getvalue(),
                 file_name="contract_list_comparison.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
             )
