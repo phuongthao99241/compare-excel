@@ -50,13 +50,43 @@ def clean_and_prepare(uploaded_file, id_col, asset_col):
 
     return df_data.set_index("Key")
 
-# 💡 Vorbereitung für Vertragsliste (normale Header-Struktur)
+# 💡 Vorbereitung für Vertragsliste (mehrere Zeilen pro Contract/Asset möglich)
 @st.cache_data
 def prepare_contract_list(uploaded_file, system_id_col, asset_col):
-    df = pd.read_excel(uploaded_file)  # Header in Zeile 1
+    # Normale Header-Struktur
+    df = pd.read_excel(uploaded_file)
+    df.columns = (
+    df.columns
+    .astype(str)
+    .str.strip()              # remove leading/trailing spaces + tabs
+    .str.replace('"', '')     # remove double quotes
+    .str.replace("'", "")     # remove single quotes
+        )
+
     df[system_id_col] = df[system_id_col].astype(str)
     df[asset_col] = df[asset_col].astype(str)
-    df["Key"] = df[system_id_col] + "_" + df[asset_col]
+
+    # deterministische Sortierung innerhalb jeder (System ID, Asset ID)-Gruppe
+    other_cols = [c for c in df.columns if c not in [system_id_col, asset_col]]
+    if other_cols:
+        df["_sort_key"] = df[other_cols].astype(str).agg("|".join, axis=1)
+        df = df.sort_values([system_id_col, asset_col, "_sort_key"])
+        df = df.drop(columns=["_sort_key"])
+    else:
+        df = df.sort_values([system_id_col, asset_col])
+
+    # Zeilennummer pro (System ID, Asset ID)
+    df["LineIndex"] = df.groupby([system_id_col, asset_col]).cumcount() + 1
+
+    # Eindeutiger Schlüssel: SystemID_AssetID_LineIndex
+    df["Key"] = (
+        df[system_id_col]
+        + "_"
+        + df[asset_col]
+        + "_"
+        + df["LineIndex"].astype(str)
+    )
+
     return df.set_index("Key")
 
 # ===== Nur Logik: Numerische Abweichungen < 1 ignorieren =====
@@ -161,8 +191,8 @@ with tab_de:
             results = []
             for key in all_keys:
                 row = {
-                    id_col: key.split("_")[0],
-                    asset_col: "_".join(key.split("_")[1:])
+                    id_col: df_test[id_col].get(key, df_prod[id_col].get(key, "")),
+                    asset_col: df_test[asset_col].get(key, df_prod[asset_col].get(key, "")),
                 }
 
                 if key not in df_test.index:
@@ -181,7 +211,6 @@ with tab_de:
 
                         if pd.isna(val_test) and pd.isna(val_prod):
                             continue
-                        # numerische Abweichungen < 1 ignorieren
                         if nearly_equal(val_test, val_prod, TOL):
                             continue
 
@@ -212,15 +241,15 @@ with tab_de:
         file_test = st.file_uploader("Test-Vertragsliste hochladen", type=["xlsx"], key="test_de_contracts")
         file_prod = st.file_uploader("Prod-Vertragsliste hochladen", type=["xlsx"], key="prod_de_contracts")
 
-        system_id_col = "Vertrags-ID"
-        asset_col = "Asset-ID"
+        system_id_col = "System-ID"
+        asset_col = "Asset System-ID"
 
         if file_test and file_prod:
             df_test = prepare_contract_list(file_test, system_id_col, asset_col)
             df_prod = prepare_contract_list(file_prod, system_id_col, asset_col)
 
-            columns_test = set(df_test.columns) - {system_id_col, asset_col, "Key"}
-            columns_prod = set(df_prod.columns) - {system_id_col, asset_col, "Key"}
+            columns_test = set(df_test.columns) - {system_id_col, asset_col, "Key", "LineIndex"}
+            columns_prod = set(df_prod.columns) - {system_id_col, asset_col, "Key", "LineIndex"}
 
             only_in_test = sorted(columns_test - columns_prod)
             only_in_prod = sorted(columns_prod - columns_test)
@@ -257,13 +286,22 @@ with tab_de:
                 )
 
             all_keys = sorted(set(df_test.index).union(set(df_prod.index)))
-            common_cols = df_test.columns.intersection(df_prod.columns).difference([system_id_col, asset_col])
+            common_cols = df_test.columns.intersection(df_prod.columns).difference(
+                [system_id_col, asset_col, "Key", "LineIndex"]
+            )
 
             results = []
             for key in all_keys:
+                # System-ID / Asset-ID / Zeile aus der Tabelle holen (egal ob aus Test oder Prod)
+                if key in df_test.index:
+                    src = df_test
+                else:
+                    src = df_prod
+
                 row = {
-                    system_id_col: key.split("_")[0],
-                    asset_col: "_".join(key.split("_")[1:])
+                    system_id_col: src.loc[key, system_id_col],
+                    asset_col: src.loc[key, asset_col],
+                    "Zeilen-Index": src.loc[key, "LineIndex"],
                 }
 
                 if key not in df_test.index:
@@ -275,10 +313,6 @@ with tab_de:
                     for col in common_cols:
                         val_test = df_test.loc[key, col]
                         val_prod = df_prod.loc[key, col]
-                        if isinstance(val_test, pd.Series):
-                            val_test = val_test.iloc[0]
-                        if isinstance(val_prod, pd.Series):
-                            val_prod = val_prod.iloc[0]
 
                         if pd.isna(val_test) and pd.isna(val_prod):
                             continue
@@ -364,8 +398,8 @@ with tab_en:
             results = []
             for key in all_keys:
                 row = {
-                    id_col: key.split("_")[0],
-                    asset_col: "_".join(key.split("_")[1:])
+                    id_col: df_test[id_col].get(key, df_prod[id_col].get(key, "")),
+                    asset_col: df_test[asset_col].get(key, df_prod[asset_col].get(key, "")),
                 }
 
                 if key not in df_test.index:
@@ -384,7 +418,6 @@ with tab_en:
 
                         if pd.isna(val_test) and pd.isna(val_prod):
                             continue
-                        # Logic only: ignore numeric deltas < 1
                         if nearly_equal(val_test, val_prod, TOL):
                             continue
 
@@ -414,15 +447,15 @@ with tab_en:
         file_test = st.file_uploader("Upload Test contract list", type=["xlsx"], key="test_en_contracts")
         file_prod = st.file_uploader("Upload Prod contract list", type=["xlsx"], key="prod_en_contracts")
 
-        system_id_col = "Contract ID"
-        asset_col = "Asset ID"
+        system_id_col = "System ID"
+        asset_col = "Asset [System ID]"
 
         if file_test and file_prod:
             df_test = prepare_contract_list(file_test, system_id_col, asset_col)
             df_prod = prepare_contract_list(file_prod, system_id_col, asset_col)
 
-            columns_test = set(df_test.columns) - {system_id_col, asset_col, "Key"}
-            columns_prod = set(df_prod.columns) - {system_id_col, asset_col, "Key"}
+            columns_test = set(df_test.columns) - {system_id_col, asset_col, "Key", "LineIndex"}
+            columns_prod = set(df_prod.columns) - {system_id_col, asset_col, "Key", "LineIndex"}
 
             only_in_test = sorted(columns_test - columns_prod)
             only_in_prod = sorted(columns_prod - columns_test)
@@ -459,13 +492,21 @@ with tab_en:
                 )
 
             all_keys = sorted(set(df_test.index).union(set(df_prod.index)))
-            common_cols = df_test.columns.intersection(df_prod.columns).difference([system_id_col, asset_col])
+            common_cols = df_test.columns.intersection(df_prod.columns).difference(
+                [system_id_col, asset_col, "Key", "LineIndex"]
+            )
 
             results = []
             for key in all_keys:
+                if key in df_test.index:
+                    src = df_test
+                else:
+                    src = df_prod
+
                 row = {
-                    system_id_col: key.split("_")[0],
-                    asset_col: "_".join(key.split("_")[1:])
+                    system_id_col: src.loc[key, system_id_col],
+                    asset_col: src.loc[key, asset_col],
+                    "Line index": src.loc[key, "LineIndex"],
                 }
 
                 if key not in df_test.index:
@@ -477,10 +518,6 @@ with tab_en:
                     for col in common_cols:
                         val_test = df_test.loc[key, col]
                         val_prod = df_prod.loc[key, col]
-                        if isinstance(val_test, pd.Series):
-                            val_test = val_test.iloc[0]
-                        if isinstance(val_prod, pd.Series):
-                            val_prod = val_prod.iloc[0]
 
                         if pd.isna(val_test) and pd.isna(val_prod):
                             continue
