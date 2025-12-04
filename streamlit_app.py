@@ -9,7 +9,7 @@ st.title("🔍 Vertrags-/Asset-Datenvergleich (Test vs. Prod)")
 # ===== Mode selection (valid for both languages) =====
 mode = st.radio(
     "Bitte Bereich wählen / Choose section:",
-    ["1️⃣ Compare closings", "2️⃣ Compare contract list"],
+    ["1️⃣ ABSCHLÜSSE (CLOSINGS)", "2️⃣ VERTRAGSLISTE (CONTRACT LIST)"],
     horizontal=True,
 )
 
