@@ -148,7 +148,7 @@ def prepare_contract_list(
 
 
 # ===== Nur Logik: Numerische Abweichungen < 1 ignorieren =====
-TOL = 1.0  # fester Schwellwert; Frontend bleibt unverändert
+TOL = 1.0  # Basis-Schwellwert; wird dynamisch angepasst
 
 
 def _try_parse_number(val):
@@ -185,11 +185,24 @@ def _try_parse_number(val):
 
 
 def nearly_equal(a, b, tol=TOL) -> bool:
-    """True, wenn a und b numerisch sind und |a-b| < tol."""
+    """
+    True, wenn a und b numerisch sind und |a-b| < tol.
+    Für kleine Werte (< 1) wird eine deutlich kleinere Toleranz verwendet,
+    damit z.B. Zinssätze (0.03 vs. 0.06) nicht als 'gleich' gelten.
+    """
     ok_a, fa = _try_parse_number(a)
     ok_b, fb = _try_parse_number(b)
     if ok_a and ok_b:
-        return abs(fa - fb) < tol
+        max_abs = max(abs(fa), abs(fb))
+
+        # Kleine Werte: z.B. Zinssätze, Faktoren etc.
+        if max_abs < 1:
+            dynamic_tol = 1e-6  # bei Bedarf z.B. 0.0001
+        else:
+            # Normale Beträge: Toleranz wie bisher (1.0)
+            dynamic_tol = tol
+
+        return abs(fa - fb) < dynamic_tol
     return False
 
 
