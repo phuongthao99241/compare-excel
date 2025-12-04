@@ -212,7 +212,7 @@ with tab_de:
         file_test = st.file_uploader("Test-Vertragsliste hochladen", type=["xlsx"], key="test_de_contracts")
         file_prod = st.file_uploader("Prod-Vertragsliste hochladen", type=["xlsx"], key="prod_de_contracts")
 
-        system_id_col = "System-ID"
+        system_id_col = "Vertrags-ID"
         asset_col = "Asset-ID"
 
         if file_test and file_prod:
@@ -414,7 +414,7 @@ with tab_en:
         file_test = st.file_uploader("Upload Test contract list", type=["xlsx"], key="test_en_contracts")
         file_prod = st.file_uploader("Upload Prod contract list", type=["xlsx"], key="prod_en_contracts")
 
-        system_id_col = "System ID"
+        system_id_col = "Contract ID"
         asset_col = "Asset ID"
 
         if file_test and file_prod:
