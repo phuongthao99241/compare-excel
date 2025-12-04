@@ -50,47 +50,74 @@ def clean_and_prepare(uploaded_file, id_col, asset_col):
 
     return df_data.set_index("Key")
 
-# 💡 Vorbereitung für Vertragsliste (mehrere Zeilen pro Contract/Asset möglich)
-@st.cache_data
-def prepare_contract_list(uploaded_file, system_id_col, asset_col):
-    # Normale Header-Struktur
-    df = pd.read_excel(uploaded_file)
-    df.columns = (
-    df.columns
-    .astype(str)
-    .str.strip()              # remove leading/trailing spaces + tabs
-    .str.replace('"', '')     # remove double quotes
-    .str.replace("'", "")     # remove single quotes
-        )
 
+# 💡 Vorbereitung für Vertragsliste (mehrere Zeilen pro Contract/Asset möglich,
+#     mit Matching auf Payment/Option ID, falls vorhanden)
+@st.cache_data
+def prepare_contract_list(
+    uploaded_file,
+    system_id_col,
+    asset_col,
+    payment_id_col=None,
+    option_id_col=None,
+):
+    df = pd.read_excel(uploaded_file)
+
+    # Spaltennamen normalisieren: trim + Quotes entfernen
+    df.columns = (
+        df.columns.astype(str)
+        .str.strip()                              # führende / trailing spaces & Tabs
+        .str.replace('"', '', regex=False)        # doppelte Anführungszeichen
+        .str.replace("'", "", regex=False)        # einfache Anführungszeichen
+    )
+
+    # Kerntypen als String
     df[system_id_col] = df[system_id_col].astype(str)
     df[asset_col] = df[asset_col].astype(str)
 
-    # deterministische Sortierung innerhalb jeder (System ID, Asset ID)-Gruppe
-    other_cols = [c for c in df.columns if c not in [system_id_col, asset_col]]
-    if other_cols:
-        df["_sort_key"] = df[other_cols].astype(str).agg("|".join, axis=1)
-        df = df.sort_values([system_id_col, asset_col, "_sort_key"])
-        df = df.drop(columns=["_sort_key"])
+    has_payment = payment_id_col is not None and payment_id_col in df.columns
+    has_option = option_id_col is not None and option_id_col in df.columns
+
+    if has_payment:
+        df[payment_id_col] = df[payment_id_col].astype(str)
+    if has_option:
+        df[option_id_col] = df[option_id_col].astype(str)
+
+    # ✅ Wenn Payment/Option verfügbar sind, verwenden wir diese für das Matching
+    if has_payment or has_option:
+        key_cols = [system_id_col, asset_col]
+        if has_payment:
+            key_cols.append(payment_id_col)
+        if has_option:
+            key_cols.append(option_id_col)
+
+        df["Key"] = df[key_cols].astype(str).agg("_".join, axis=1)
+
     else:
-        df = df.sort_values([system_id_col, asset_col])
+        # 🔁 Fallback: Zeilenindex pro (System, Asset)
+        other_cols = [c for c in df.columns if c not in [system_id_col, asset_col]]
+        if other_cols:
+            df["_sort_key"] = df[other_cols].astype(str).agg("|".join, axis=1)
+            df = df.sort_values([system_id_col, asset_col, "_sort_key"])
+            df = df.drop(columns=["_sort_key"])
+        else:
+            df = df.sort_values([system_id_col, asset_col])
 
-    # Zeilennummer pro (System ID, Asset ID)
-    df["LineIndex"] = df.groupby([system_id_col, asset_col]).cumcount() + 1
-
-    # Eindeutiger Schlüssel: SystemID_AssetID_LineIndex
-    df["Key"] = (
-        df[system_id_col]
-        + "_"
-        + df[asset_col]
-        + "_"
-        + df["LineIndex"].astype(str)
-    )
+        df["LineIndex"] = df.groupby([system_id_col, asset_col]).cumcount() + 1
+        df["Key"] = (
+            df[system_id_col]
+            + "_"
+            + df[asset_col]
+            + "_"
+            + df["LineIndex"].astype(str)
+        )
 
     return df.set_index("Key")
 
+
 # ===== Nur Logik: Numerische Abweichungen < 1 ignorieren =====
 TOL = 1.0  # fester Schwellwert; Frontend bleibt unverändert
+
 
 def _try_parse_number(val):
     """Versucht, val als Zahl zu interpretieren (DE/EN-Formate, Währungs-/%-Zeichen)."""
@@ -104,11 +131,11 @@ def _try_parse_number(val):
 
     s_clean = (
         s.replace("\xa0", "")
-         .replace("€", "")
-         .replace("%", "")
-         .replace(" ", "")
-         .replace("’", "")
-         .replace("'", "")
+        .replace("€", "")
+        .replace("%", "")
+        .replace(" ", "")
+        .replace("’", "")
+        .replace("'", "")
     )
     # DE: 1.234,56
     try:
@@ -124,6 +151,7 @@ def _try_parse_number(val):
         pass
     return False, None
 
+
 def nearly_equal(a, b, tol=TOL) -> bool:
     """True, wenn a und b numerisch sind und |a-b| < tol."""
     ok_a, fa = _try_parse_number(a)
@@ -131,6 +159,8 @@ def nearly_equal(a, b, tol=TOL) -> bool:
     if ok_a and ok_b:
         return abs(fa - fb) < tol
     return False
+
+
 # =============================================================
 
 # 🇩🇪 Deutsch
@@ -243,10 +273,24 @@ with tab_de:
 
         system_id_col = "System-ID"
         asset_col = "Asset System-ID"
+        payment_id_col = "Zahlungs-ID"
+        option_id_col = "Options-ID"
 
         if file_test and file_prod:
-            df_test = prepare_contract_list(file_test, system_id_col, asset_col)
-            df_prod = prepare_contract_list(file_prod, system_id_col, asset_col)
+            df_test = prepare_contract_list(
+                file_test,
+                system_id_col,
+                asset_col,
+                payment_id_col=payment_id_col,
+                option_id_col=option_id_col,
+            )
+            df_prod = prepare_contract_list(
+                file_prod,
+                system_id_col,
+                asset_col,
+                payment_id_col=payment_id_col,
+                option_id_col=option_id_col,
+            )
 
             columns_test = set(df_test.columns) - {system_id_col, asset_col, "Key", "LineIndex"}
             columns_prod = set(df_prod.columns) - {system_id_col, asset_col, "Key", "LineIndex"}
@@ -301,8 +345,14 @@ with tab_de:
                 row = {
                     system_id_col: src.loc[key, system_id_col],
                     asset_col: src.loc[key, asset_col],
-                    "Zeilen-Index": src.loc[key, "LineIndex"],
                 }
+
+                if payment_id_col in src.columns:
+                    row[payment_id_col] = src.loc[key, payment_id_col]
+                if option_id_col in src.columns:
+                    row[option_id_col] = src.loc[key, option_id_col]
+                if "LineIndex" in src.columns:
+                    row["Zeilen-Index"] = src.loc[key, "LineIndex"]
 
                 if key not in df_test.index:
                     row["Unterschiede"] = "Nur in Prod"
@@ -449,10 +499,24 @@ with tab_en:
 
         system_id_col = "System ID"
         asset_col = "Asset [System ID]"
+        payment_id_col = "Payment ID"
+        option_id_col = "Option ID"
 
         if file_test and file_prod:
-            df_test = prepare_contract_list(file_test, system_id_col, asset_col)
-            df_prod = prepare_contract_list(file_prod, system_id_col, asset_col)
+            df_test = prepare_contract_list(
+                file_test,
+                system_id_col,
+                asset_col,
+                payment_id_col=payment_id_col,
+                option_id_col=option_id_col,
+            )
+            df_prod = prepare_contract_list(
+                file_prod,
+                system_id_col,
+                asset_col,
+                payment_id_col=payment_id_col,
+                option_id_col=option_id_col,
+            )
 
             columns_test = set(df_test.columns) - {system_id_col, asset_col, "Key", "LineIndex"}
             columns_prod = set(df_prod.columns) - {system_id_col, asset_col, "Key", "LineIndex"}
@@ -506,8 +570,14 @@ with tab_en:
                 row = {
                     system_id_col: src.loc[key, system_id_col],
                     asset_col: src.loc[key, asset_col],
-                    "Line index": src.loc[key, "LineIndex"],
                 }
+
+                if payment_id_col in src.columns:
+                    row[payment_id_col] = src.loc[key, payment_id_col]
+                if option_id_col in src.columns:
+                    row[option_id_col] = src.loc[key, option_id_col]
+                if "LineIndex" in src.columns:
+                    row["Line index"] = src.loc[key, "LineIndex"]
 
                 if key not in df_test.index:
                     row["Differences"] = "Only in Prod"
